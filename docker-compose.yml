@@ -1,0 +1,73 @@
+# music-sync -- mirrors Deezer playlists onto Spotify.
+#
+# Deploy in Portainer: Stacks -> Add stack -> Repository, point it at this
+# repo, and define the environment variables listed below in the stack's
+# "Environment variables" section. Nothing secret belongs in this file.
+
+services:
+  music-sync:
+    build: .
+    image: music-sync:latest
+    container_name: music-sync
+    restart: unless-stopped
+    environment:
+      # -- Required ------------------------------------------------------
+      SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID:?set SPOTIFY_CLIENT_ID in the stack environment}
+      SPOTIFY_CLIENT_SECRET: ${SPOTIFY_CLIENT_SECRET:?set SPOTIFY_CLIENT_SECRET in the stack environment}
+      SPOTIFY_REFRESH_TOKEN: ${SPOTIFY_REFRESH_TOKEN:?run the auth helper, then set SPOTIFY_REFRESH_TOKEN}
+      # Deezer playlist -> Spotify playlist. Separate entries with ';'.
+      # Example: 908622995 -> "Rock Mirror"; 123456789 -> 37i9dQZF1DXcBWIGoYBM5M
+      PLAYLISTS: ${PLAYLISTS:?set PLAYLISTS in the stack environment}
+
+      # -- Required for private Deezer playlists --------------------------
+      DEEZER_ACCESS_TOKEN: ${DEEZER_ACCESS_TOKEN:-}
+
+      # -- Optional -------------------------------------------------------
+      SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-60}
+      RUN_ONCE: ${RUN_ONCE:-false}
+      DRY_RUN: ${DRY_RUN:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      TZ: ${TZ:-Europe/Berlin}
+
+      CREATE_MISSING_PLAYLISTS: ${CREATE_MISSING_PLAYLISTS:-true}
+      SPOTIFY_PLAYLISTS_PUBLIC: ${SPOTIFY_PLAYLISTS_PUBLIC:-false}
+      SPOTIFY_PLAYLIST_DESCRIPTION: ${SPOTIFY_PLAYLIST_DESCRIPTION:-Mirrored from Deezer by music-sync. Manual edits are overwritten.}
+
+      MATCH_THRESHOLD: ${MATCH_THRESHOLD:-0.72}
+      DURATION_TOLERANCE_SECONDS: ${DURATION_TOLERANCE_SECONDS:-8}
+      SEARCH_LIMIT: ${SEARCH_LIMIT:-8}
+
+      ALLOW_EMPTY_MIRROR: ${ALLOW_EMPTY_MIRROR:-false}
+      ALLOW_PARTIAL_SOURCE: ${ALLOW_PARTIAL_SOURCE:-false}
+      MAX_UNMATCHED_RATIO: ${MAX_UNMATCHED_RATIO:-1.0}
+      HTTP_TIMEOUT_SECONDS: ${HTTP_TIMEOUT_SECONDS:-30}
+      HTTP_MAX_RETRIES: ${HTTP_MAX_RETRIES:-5}
+    volumes:
+      # Match cache, rotated Spotify token and the unmatched-tracks report.
+      - music-sync-data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # One-off helper: `docker compose run --rm --service-ports auth`
+  # Not started by `docker compose up` because of the profile.
+  auth:
+    profiles: ["auth"]
+    build: .
+    image: music-sync:latest
+    entrypoint: ["python", "-m", "musicsync.auth"]
+    environment:
+      SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID:-}
+      SPOTIFY_CLIENT_SECRET: ${SPOTIFY_CLIENT_SECRET:-}
+      SPOTIFY_REDIRECT_URI: ${SPOTIFY_REDIRECT_URI:-http://127.0.0.1:8080/callback}
+      DEEZER_APP_ID: ${DEEZER_APP_ID:-}
+      DEEZER_APP_SECRET: ${DEEZER_APP_SECRET:-}
+      DEEZER_REDIRECT_URI: ${DEEZER_REDIRECT_URI:-http://localhost:8080/callback}
+      AUTH_PORT: ${AUTH_PORT:-8080}
+    ports:
+      - "${AUTH_PORT:-8080}:${AUTH_PORT:-8080}"
+
+volumes:
+  music-sync-data:

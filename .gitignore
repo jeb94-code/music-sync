@@ -1,0 +1,28 @@
+# Secrets -- this repository is public.
+.env
+.env.*
+!.env.example
+*.pem
+spotify-token.json
+
+# Local data
+data/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+unmatched.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
