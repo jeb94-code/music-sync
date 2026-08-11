@@ -1,0 +1,143 @@
+{
+  "name": "music-sync: Deezer -> Spotify",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000001",
+      "name": "Every hour",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-220, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://music-sync:8477/sync",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 600000,
+          "response": {
+            "response": {
+              "neverError": false
+            }
+          }
+        }
+      },
+      "id": "a1000000-0000-4000-8000-000000000002",
+      "name": "Trigger sync",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [0, 0],
+      "notes": "Header Auth credential: name X-Auth-Token, value = API_TOKEN from the stack. Timeout is 10 min; for very large libraries use /sync?wait=false and poll /status instead."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1000000-0000-4000-8000-000000000001",
+              "leftValue": "={{ $json.totals.failed }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000003",
+      "name": "Any playlist failed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d1000000-0000-4000-8000-000000000001",
+              "name": "subject",
+              "value": "=music-sync: {{ $json.totals.failed }} playlist(s) failed",
+              "type": "string"
+            },
+            {
+              "id": "d1000000-0000-4000-8000-000000000002",
+              "name": "body",
+              "value": "={{ $json.playlists.filter(p => p.error).map(p => `${p.deezer_title || p.deezer_id}: ${p.error}`).join('\\n') }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000004",
+      "name": "Build alert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [460, -100],
+      "notes": "Replace this with your own notification node (Telegram, Gotify, Mail, ...). subject and body are ready to use."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d1000000-0000-4000-8000-000000000003",
+              "name": "summary",
+              "value": "=Synced {{ $json.totals.playlists }} playlist(s), {{ $json.totals.changed }} changed, {{ $json.totals.unmatched_tracks }} track(s) without a Spotify match, in {{ $json.duration_s }}s",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a1000000-0000-4000-8000-000000000005",
+      "name": "Summarize",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [460, 100]
+    }
+  ],
+  "connections": {
+    "Every hour": {
+      "main": [[{ "node": "Trigger sync", "type": "main", "index": 0 }]]
+    },
+    "Trigger sync": {
+      "main": [[{ "node": "Any playlist failed?", "type": "main", "index": 0 }]]
+    },
+    "Any playlist failed?": {
+      "main": [
+        [{ "node": "Build alert", "type": "main", "index": 0 }],
+        [{ "node": "Summarize", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "music-sync-example"
+  },
+  "tags": []
+}

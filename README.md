@@ -25,11 +25,12 @@ Keys und Tokens kommen ausschließlich aus Environment-Variablen.
 4. [Schritt 3 – Playlist-IDs heraussuchen](#schritt-3--playlist-ids-heraussuchen)
 5. [Schritt 4 – Stack in Portainer anlegen](#schritt-4--stack-in-portainer-anlegen)
 6. [Schritt 5 – Trockenlauf, dann scharf schalten](#schritt-5--trockenlauf-dann-scharf-schalten)
-7. [Environment-Variablen](#environment-variablen)
-8. [Betrieb](#betrieb)
-9. [Fehlersuche](#fehlersuche)
-10. [Grenzen](#grenzen)
-11. [Entwicklung](#entwicklung)
+7. [Alternative: Steuerung über n8n](#alternative-steuerung-über-n8n)
+8. [Environment-Variablen](#environment-variablen)
+9. [Betrieb](#betrieb)
+10. [Fehlersuche](#fehlersuche)
+11. [Grenzen](#grenzen)
+12. [Entwicklung](#entwicklung)
 
 ---
 
@@ -218,6 +219,103 @@ deutlich schneller.
 
 ---
 
+## Alternative: Steuerung über n8n
+
+Wenn n8n ohnehin läuft, kann es den Zeitplan übernehmen. Der Container macht
+dann von sich aus nichts mehr, sondern wartet auf einen HTTP-Trigger und gibt
+das Ergebnis als JSON zurück — damit kannst du in n8n direkt auf Fehler
+reagieren.
+
+### Stack umstellen
+
+Gleiches Repository, gleiche Variablen, nur zwei Unterschiede:
+
+- **Compose path** in Portainer auf `docker-compose.n8n.yml` setzen
+- zusätzlich `API_TOKEN` als Variable setzen:
+  ```bash
+  openssl rand -hex 32
+  ```
+
+`SYNC_INTERVAL_MINUTES` ist in diesem Modus wirkungslos — n8n bestimmt den
+Takt. Ohne `API_TOKEN` startet der Container bewusst nicht: ein `POST /sync`
+schreibt deine Playlisten um, und das darf im Heimnetz nicht jeder auslösen.
+
+### Endpoints
+
+| Methode | Pfad | Auth | Zweck |
+| --- | --- | --- | --- |
+| `GET` | `/health` | nein | Erreichbarkeit, für Healthcheck und n8n-Test |
+| `GET` | `/status` | ja | letztes Ergebnis, und ob gerade ein Lauf läuft |
+| `POST` | `/sync` | ja | Lauf starten, Ergebnis abwarten |
+| `POST` | `/sync?wait=false` | ja | Lauf starten, sofort `202` zurück, später `/status` pollen |
+
+Authentifiziert wird per `X-Auth-Token: <API_TOKEN>` oder
+`Authorization: Bearer <API_TOKEN>`. Läuft bereits ein Sync, antwortet ein
+zweiter Trigger mit `409` statt sich anzustellen.
+
+Schneller Test von der Kommandozeile:
+
+```bash
+curl -s -X POST http://localhost:8477/sync \
+  -H "X-Auth-Token: $API_TOKEN" | jq .totals
+```
+
+### Antwortformat
+
+```jsonc
+{
+  "started_at": "2026-01-01T09:00:00+00:00",
+  "finished_at": "2026-01-01T09:00:21+00:00",
+  "duration_s": 21.4,
+  "dry_run": false,
+  "totals": {
+    "playlists": 2,
+    "failed": 0,          // Playlisten mit Fehler
+    "skipped": 0,         // von einer Sicherung abgebrochen
+    "changed": 1,         // tatsächlich geändert
+    "unmatched_tracks": 3 // Titel ohne Spotify-Entsprechung
+  },
+  "playlists": [
+    {
+      "deezer_id": "908622995",
+      "deezer_title": "Rock",
+      "spotify_name": "Rock Mirror",
+      "source_tracks": 42, "matched_tracks": 41,
+      "changed": true, "added": 3, "removed": 1, "reordered": false,
+      "error": null, "skipped_reason": null,
+      "unmatched": [{ "deezer_id": "123", "label": "Band - Titel", "isrc": null }]
+    }
+  ]
+}
+```
+
+Ein abgeschlossener Lauf antwortet immer mit `200`, auch wenn einzelne
+Playlisten fehlgeschlagen sind — verzweige in n8n auf `totals.failed`, nicht
+auf den HTTP-Status. `500` bedeutet, dass der Lauf als Ganzes gescheitert ist
+(z. B. Deezer nicht erreichbar).
+
+### Fertiger Workflow
+
+`n8n/music-sync-workflow.json` importieren (n8n → *Workflows* → *Import from
+File*). Enthalten: Schedule Trigger (stündlich) → HTTP Request → IF auf
+`totals.failed` → vorbereiteter Alert-Text. Zu tun bleibt:
+
+1. Im Node **Trigger sync** eine *Header Auth*-Credential anlegen:
+   Name `X-Auth-Token`, Value = dein `API_TOKEN`.
+2. Die URL prüfen. Stehen n8n und music-sync im selben Docker-Netz, passt
+   `http://music-sync:8477/sync` direkt und du kannst den Port im Compose gar
+   nicht erst veröffentlichen. Sonst `http://<host-ip>:8477/sync`.
+3. Den Node **Build alert** durch deine Benachrichtigung ersetzen (Telegram,
+   Gotify, Mail …) — `subject` und `body` sind fertig befüllt.
+
+Der HTTP-Request-Node hat 10 Minuten Timeout. Der allererste Lauf einer großen
+Bibliothek kann länger dauern (ein Deezer-Abruf pro Titel für den ISRC); nimm
+dafür einmalig `/sync?wait=false` und poll danach `/status`, oder lass den
+ersten Lauf im Schedule-Modus durchlaufen und stelle danach um. Ab dem zweiten
+Lauf greift der Cache und es geht deutlich schneller.
+
+---
+
 ## Environment-Variablen
 
 ### Pflicht
@@ -234,8 +332,12 @@ deutlich schneller.
 | Variable | Standard | Beschreibung |
 | --- | --- | --- |
 | `DEEZER_ACCESS_TOKEN` | – | Nötig für private Deezer-Playlisten |
-| `SYNC_INTERVAL_MINUTES` | `60` | Abstand zwischen zwei Läufen |
-| `RUN_ONCE` | `false` | Einmal laufen und beenden (für eigene Zeitsteuerung) |
+| `MODE` | `schedule` | `schedule` (eigener Takt), `server` (HTTP-Trigger, siehe n8n), `once` (ein Lauf, dann Ende) |
+| `SYNC_INTERVAL_MINUTES` | `60` | Abstand zwischen zwei Läufen, nur bei `MODE=schedule` |
+| `API_TOKEN` | – | Pflicht bei `MODE=server`, schützt `/sync` und `/status` |
+| `HTTP_PORT` | `8477` | Port im Server-Modus |
+| `HTTP_BIND` | `0.0.0.0` | Bind-Adresse im Server-Modus |
+| `RUN_ONCE` | `false` | Altes Flag, entspricht `MODE=once`; `MODE` hat Vorrang |
 | `DRY_RUN` | `false` | Nur protokollieren, nichts schreiben |
 | `LOG_LEVEL` | `INFO` | `DEBUG` zeigt jede Zuordnungsentscheidung |
 | `TZ` | `Europe/Berlin` | Zeitzone für die Log-Zeitstempel |
@@ -268,8 +370,11 @@ docker exec music-sync cat /data/unmatched.log
 Eine Zeile je Titel mit Playliste, Interpret, Deezer-ID und ISRC — genug, um
 den Titel bei Bedarf von Hand nachzutragen oder `MATCH_THRESHOLD` zu senken.
 
-**Health:** Der Container schreibt nach jedem Lauf einen Heartbeat. Bleibt er
-länger als zwei Intervalle aus, meldet Docker den Container als `unhealthy`.
+**Health:** Im Schedule-Modus schreibt der Container nach jedem Lauf einen
+Heartbeat; bleibt er länger als zwei Intervalle aus, meldet Docker den
+Container als `unhealthy`. Im Server-Modus gibt es zwischen den Triggern
+nichts zu schlagen — dort prüft der Healthcheck stattdessen, ob `/health`
+noch antwortet.
 
 **Cache zurücksetzen** (erzwingt eine komplette Neuzuordnung):
 
@@ -281,9 +386,11 @@ docker restart music-sync
 Negative Treffer (Titel, die auf Spotify nicht gefunden wurden) werden ohnehin
 nach 7 Tagen automatisch neu geprüft — Spotify-Kataloge wachsen.
 
-**Eigene Zeitsteuerung statt Dauerbetrieb:** `RUN_ONCE=true` setzen und den
+**Eigene Zeitsteuerung statt Dauerbetrieb:** `MODE=once` setzen und den
 Container per Cron oder Portainer starten. Der Exit-Code ist `1`, wenn eine
-Playliste fehlgeschlagen ist, `2` bei Konfigurationsfehlern.
+Playliste fehlgeschlagen ist, `2` bei Konfigurationsfehlern. Wer n8n nutzt,
+fährt mit `MODE=server` besser — siehe
+[Steuerung über n8n](#alternative-steuerung-über-n8n).
 
 ---
 
@@ -341,9 +448,11 @@ musicsync/
   matching.py     Normalisierung und Bewertung der Treffer
   cache.py        SQLite-Cache für Zuordnungen
   sync.py         Spiegel-Logik und Sicherungen
+  runner.py       Einen Lauf zusammenbauen, Ergebnis als JSON
+  server.py       HTTP-Trigger für n8n (MODE=server)
   auth.py         Einmaliger OAuth-Helper
   healthcheck.py  Docker HEALTHCHECK
-  __main__.py     Entrypoint und Zeitplan
+  __main__.py     Entrypoint und Betriebsmodi
 ```
 
 Lokal laufen lassen:

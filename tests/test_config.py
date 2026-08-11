@@ -167,6 +167,7 @@ class TestLoadConfig:
         for key in (
             "DEEZER_ACCESS_TOKEN", "DATA_DIR", "SYNC_INTERVAL_MINUTES", "RUN_ONCE",
             "DRY_RUN", "LOG_LEVEL", "SEARCH_LIMIT", "MATCH_THRESHOLD",
+            "MODE", "API_TOKEN", "HTTP_PORT", "HTTP_BIND",
         ):
             monkeypatch.delenv(key, raising=False)
         monkeypatch.setenv("SPOTIFY_CLIENT_ID", "cid")
@@ -206,6 +207,47 @@ class TestLoadConfig:
         monkeypatch.setenv("SEARCH_LIMIT", "51")
         with pytest.raises(ConfigError, match="50 or less"):
             load_config()
+
+    def test_defaults_to_schedule_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._base_env(monkeypatch)
+        assert load_config().mode == "schedule"
+
+    def test_run_once_still_selects_once_mode(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._base_env(monkeypatch)
+        monkeypatch.setenv("RUN_ONCE", "true")
+        assert load_config().mode == "once"
+
+    def test_explicit_mode_wins_over_run_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._base_env(monkeypatch)
+        monkeypatch.setenv("RUN_ONCE", "true")
+        monkeypatch.setenv("MODE", "schedule")
+        assert load_config().mode == "schedule"
+
+    def test_unknown_mode_is_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._base_env(monkeypatch)
+        monkeypatch.setenv("MODE", "webhook")
+        with pytest.raises(ConfigError, match="MODE must be one of"):
+            load_config()
+
+    def test_server_mode_requires_an_api_token(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._base_env(monkeypatch)
+        monkeypatch.setenv("MODE", "server")
+        with pytest.raises(ConfigError, match="API_TOKEN"):
+            load_config()
+
+    def test_server_mode_with_token(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._base_env(monkeypatch)
+        monkeypatch.setenv("MODE", "server")
+        monkeypatch.setenv("API_TOKEN", "s3cret")
+        config = load_config()
+        assert config.mode == "server"
+        assert config.http_port == 8477
 
 
 def test_redact_hides_the_tail() -> None:

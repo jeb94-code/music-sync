@@ -1,8 +1,9 @@
-"""Docker HEALTHCHECK: is the scheduler still completing runs?
+"""Docker HEALTHCHECK, one check per run mode.
 
-The sync loop rewrites a heartbeat file at the end of every pass. If that file
-is older than two intervals plus a grace period, the loop is wedged and the
-container should be reported unhealthy so Docker or Portainer can restart it.
+Scheduled containers prove liveness by finishing runs: the loop rewrites a
+heartbeat file after every pass, and a file older than two intervals means the
+loop is wedged. Server-mode containers are idle between triggers, so there is
+no heartbeat to expect -- what matters is that the endpoint still answers.
 """
 
 from __future__ import annotations
@@ -10,17 +11,29 @@ from __future__ import annotations
 import os
 import sys
 import time
+import urllib.error
+import urllib.request
 
-from .config import env_bool, env_int, env_str
+from .config import env_int, env_str, resolve_mode
 
 GRACE_S = 600
 
 
-def main() -> int:
-    if env_bool("RUN_ONCE", False):
-        # A one-shot container has no ongoing liveness to check.
-        return 0
+def _check_server() -> int:
+    port = env_int("HTTP_PORT", 8477, minimum=1)
+    url = f"http://127.0.0.1:{port}/health"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as response:
+            if response.status == 200:
+                return 0
+            print(f"{url} returned {response.status}", file=sys.stderr)
+            return 1
+    except (urllib.error.URLError, OSError) as exc:
+        print(f"{url} unreachable: {exc}", file=sys.stderr)
+        return 1
 
+
+def _check_heartbeat() -> int:
     data_dir = env_str("DATA_DIR", "/data") or "/data"
     heartbeat = os.path.join(data_dir, "heartbeat")
     interval_s = env_int("SYNC_INTERVAL_MINUTES", 60, minimum=1) * 60
@@ -46,6 +59,16 @@ def main() -> int:
         print(f"heartbeat is {age:.0f}s old (limit {deadline}s)", file=sys.stderr)
         return 1
     return 0
+
+
+def main() -> int:
+    mode = resolve_mode()
+    if mode == "once":
+        # A one-shot container has no ongoing liveness to check.
+        return 0
+    if mode == "server":
+        return _check_server()
+    return _check_heartbeat()
 
 
 if __name__ == "__main__":

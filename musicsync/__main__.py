@@ -1,22 +1,18 @@
-"""Container entrypoint: run the mirror once, or on a schedule."""
+"""Container entrypoint: run the mirror once, on a schedule, or on demand."""
 
 from __future__ import annotations
 
 import logging
-import os
 import signal
 import sys
 import threading
 from types import FrameType
 
 from . import __version__
-from .cache import MatchCache
 from .config import Config, format_playlists, load_config, redact
-from .deezer import DeezerClient
 from .errors import ConfigError, MusicSyncError
-from .httpclient import HttpClient
-from .spotify import RefreshTokenStore, SpotifyClient
-from .sync import Synchronizer, summarize
+from .runner import execute_run
+from .sync import summarize
 
 log = logging.getLogger("musicsync")
 
@@ -35,8 +31,19 @@ def _setup_logging(level: str) -> None:
 
 
 def _handle_signal(signum: int, _frame: FrameType | None) -> None:
-    log.info("Received %s; shutting down after the current step", signal.Signals(signum).name)
+    log.info(
+        "Received %s; shutting down after the current step",
+        signal.Signals(signum).name,
+    )
     _shutdown.set()
+
+
+def _describe_mode(config: Config) -> str:
+    if config.mode == "once":
+        return "run once"
+    if config.mode == "server":
+        return f"HTTP trigger on {config.http_bind}:{config.http_port}"
+    return f"every {config.interval_minutes} min"
 
 
 def _log_startup(config: Config) -> None:
@@ -51,37 +58,36 @@ def _log_startup(config: Config) -> None:
     for line in format_playlists(config.playlists).splitlines():
         log.info("%s", line)
     log.info(
-        "Interval: %s | dry-run: %s | data dir: %s",
-        "run once" if config.run_once else f"every {config.interval_minutes} min",
-        config.dry_run,
-        config.data_dir,
+        "Mode: %s | dry-run: %s | data dir: %s",
+        _describe_mode(config), config.dry_run, config.data_dir,
     )
 
 
 def run_once(config: Config) -> int:
     """Perform a single sync pass. Returns the number of failed playlists."""
-    os.makedirs(config.data_dir, exist_ok=True)
-    with HttpClient(
-        timeout=config.http_timeout_s,
-        max_retries=config.http_max_retries,
-        user_agent=f"music-sync/{__version__}",
-    ) as http, MatchCache(config.cache_path) as cache:
-        spotify = SpotifyClient(
-            http,
-            client_id=config.spotify_client_id,
-            client_secret=config.spotify_client_secret,
-            refresh_token=config.spotify_refresh_token,
-            token_store=RefreshTokenStore(
-                os.path.join(config.data_dir, "spotify-token.json")
-            ),
-        )
-        deezer = DeezerClient(http, config.deezer_access_token)
-        synchronizer = Synchronizer(config, deezer, spotify, cache)
-        result = synchronizer.run()
-
+    result = execute_run(config)
     for line in summarize(result).splitlines():
         log.info("%s", line)
     return len(result.failed)
+
+
+def _run_scheduled(config: Config) -> int:
+    while not _shutdown.is_set():
+        try:
+            run_once(config)
+        except MusicSyncError as exc:
+            # Keep the container alive; the next tick may well succeed.
+            log.error("Sync run failed: %s", exc)
+        except Exception:  # noqa: BLE001 - a scheduled service must not die
+            log.exception("Unexpected error during sync run")
+
+        if _shutdown.is_set():
+            break
+        log.info("Next run in %d minutes", config.interval_minutes)
+        _shutdown.wait(config.interval_minutes * 60)
+
+    log.info("Stopped.")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -104,29 +110,28 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
-    if config.run_once:
+    if config.mode == "once":
         try:
             return 1 if run_once(config) else 0
         except MusicSyncError as exc:
             log.error("Sync failed: %s", exc)
             return 1
 
-    while not _shutdown.is_set():
+    if config.mode == "server":
+        # Imported here so scheduled containers never load the HTTP stack.
+        from .server import serve
+
         try:
-            run_once(config)
+            serve(config, _shutdown)
         except MusicSyncError as exc:
-            # Keep the container alive; the next tick may well succeed.
-            log.error("Sync run failed: %s", exc)
-        except Exception:  # noqa: BLE001 - a scheduled service must not die
-            log.exception("Unexpected error during sync run")
+            log.error("%s", exc)
+            return 2
+        except KeyboardInterrupt:
+            pass
+        log.info("Stopped.")
+        return 0
 
-        if _shutdown.is_set():
-            break
-        log.info("Next run in %d minutes", config.interval_minutes)
-        _shutdown.wait(config.interval_minutes * 60)
-
-    log.info("Stopped.")
-    return 0
+    return _run_scheduled(config)
 
 
 if __name__ == "__main__":

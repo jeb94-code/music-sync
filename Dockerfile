@@ -23,7 +23,10 @@ USER musicsync
 
 VOLUME ["/data"]
 
-# The sync loop refreshes /data/heartbeat after every pass.
+# Only listened on when MODE=server; harmless otherwise.
+EXPOSE 8477
+
+# Checks the heartbeat in schedule mode and the HTTP endpoint in server mode.
 HEALTHCHECK --interval=5m --timeout=10s --start-period=2m --retries=3 \
     CMD ["python", "-m", "musicsync.healthcheck"]
 

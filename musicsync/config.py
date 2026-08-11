@@ -255,10 +255,17 @@ class Config:
     playlists: list[PlaylistPair]
 
     data_dir: str = "/data"
+    # "schedule" runs the built-in loop, "server" waits for HTTP triggers
+    # (n8n and friends), "once" performs a single pass and exits.
+    mode: str = "schedule"
     interval_minutes: int = 60
-    run_once: bool = False
     dry_run: bool = False
     log_level: str = "INFO"
+
+    # Server mode
+    http_bind: str = "0.0.0.0"
+    http_port: int = 8477
+    api_token: str | None = None
 
     # Matching behaviour
     match_threshold: float = 0.72
@@ -293,6 +300,26 @@ class Config:
         return os.path.join(self.data_dir, "unmatched.log")
 
 
+VALID_MODES = ("schedule", "server", "once")
+
+
+def resolve_mode() -> str:
+    """Pick the run mode, honouring the older RUN_ONCE flag.
+
+    RUN_ONCE predates MODE and is still documented for one-shot containers, so
+    it keeps working; an explicit MODE always wins over it.
+    """
+    mode = env_str("MODE")
+    if mode:
+        normalized = mode.lower()
+        if normalized not in VALID_MODES:
+            raise ConfigError(
+                f"MODE must be one of {', '.join(VALID_MODES)}, got {mode!r}"
+            )
+        return normalized
+    return "once" if env_bool("RUN_ONCE", False) else "schedule"
+
+
 def load_config() -> Config:
     """Build a Config from the process environment, validating as we go."""
     playlists_raw = env_str("PLAYLISTS", required=True)
@@ -305,8 +332,11 @@ def load_config() -> Config:
         deezer_access_token=env_str("DEEZER_ACCESS_TOKEN"),
         playlists=parse_playlists(playlists_raw),
         data_dir=env_str("DATA_DIR", "/data"),  # type: ignore[arg-type]
+        mode=resolve_mode(),
         interval_minutes=env_int("SYNC_INTERVAL_MINUTES", 60, minimum=1),
-        run_once=env_bool("RUN_ONCE", False),
+        http_bind=env_str("HTTP_BIND", "0.0.0.0"),  # type: ignore[arg-type]
+        http_port=env_int("HTTP_PORT", 8477, minimum=1),
+        api_token=env_str("API_TOKEN"),
         dry_run=env_bool("DRY_RUN", False),
         log_level=(env_str("LOG_LEVEL", "INFO") or "INFO").upper(),
         match_threshold=env_float("MATCH_THRESHOLD", 0.72, minimum=0.0, maximum=1.0),
@@ -329,6 +359,12 @@ def load_config() -> Config:
 
     if config.search_limit > 50:
         raise ConfigError("SEARCH_LIMIT must be 50 or less (Spotify API maximum)")
+    if config.mode == "server" and not config.api_token:
+        raise ConfigError(
+            "MODE=server requires API_TOKEN. A request to /sync rewrites your "
+            "Spotify playlists, so the endpoint is never left unauthenticated. "
+            "Generate one with: openssl rand -hex 32"
+        )
     return config
 
 
