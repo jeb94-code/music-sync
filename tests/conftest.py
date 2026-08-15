@@ -98,6 +98,7 @@ class FakeSpotifyClient:
         self.playlists = playlists or {}
         self.user_id = user_id
         self.market = "DE"
+        self.user = {"id": user_id, "display_name": "Test User", "country": "DE"}
         self.search_calls: list[str] = []
         self.writes: list[tuple[str, list[str]]] = []
         self.created: list[str] = []

@@ -7,7 +7,7 @@ from conftest import FakeDeezerClient, FakeSpotifyClient, deezer_raw_track, make
 
 from musicsync.cache import MatchCache
 from musicsync.config import PlaylistPair
-from musicsync.errors import MusicSyncError, SafetyAbort
+from musicsync.errors import ForbiddenError, MusicSyncError, SafetyAbort
 from musicsync.matching import Candidate
 from musicsync.sync import Synchronizer
 
@@ -358,6 +358,41 @@ class TestMatching:
         with MatchCache(cache_path) as second:
             build((deezer, spotify, second), tmp_path, pair)[0].sync_pair(pair)
         assert len(spotify.search_calls) == calls_after_first
+
+
+class TestPreflight:
+    def test_account_problems_are_reported_once_not_per_playlist(
+        self, world, tmp_path: Path
+    ) -> None:
+        # A rejected account fails identically for every playlist. Repeating
+        # the same message five times buries it; the run should stop instead.
+        deezer, spotify, cache = world
+
+        def forbidden() -> dict:
+            raise ForbiddenError("premium subscription required")
+
+        type(spotify).user = property(lambda _self: forbidden())
+        try:
+            config = make_config(
+                [
+                    PlaylistPair(deezer_id="100", spotify_id="sp1"),
+                    PlaylistPair(deezer_id="100b", spotify_id="sp2"),
+                ],
+                tmp_path,
+            )
+            with pytest.raises(ForbiddenError, match="premium"):
+                Synchronizer(config, deezer, spotify, cache).run()
+            assert spotify.writes == []
+        finally:
+            del type(spotify).user
+
+    def test_healthy_account_lets_the_run_proceed(self, world, tmp_path: Path) -> None:
+        deezer, spotify, cache = world
+        config = make_config([PlaylistPair(deezer_id="100", spotify_id="sp1")], tmp_path)
+        result = Synchronizer(config, deezer, spotify, cache).run()
+
+        assert result.failed == []
+        assert len(spotify.playlists["sp1"]["uris"]) == 3
 
 
 class TestRun:

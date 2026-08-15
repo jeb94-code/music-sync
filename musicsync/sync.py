@@ -336,9 +336,25 @@ class Synchronizer:
 
     # -- All playlists ------------------------------------------------------
 
+    def _preflight(self) -> None:
+        """Resolve the Spotify account once, before touching any playlist.
+
+        Credential and account-level problems are the same for every playlist,
+        so discovering them per playlist just multiplies one message by the
+        number configured and buries it.
+        """
+        user = self.spotify.user
+        log.info(
+            "Spotify account: %s (%s)",
+            user.get("display_name") or self.spotify.user_id,
+            self.spotify.market or "unknown market",
+        )
+
     def run(self) -> RunResult:
         started_at = datetime.now(timezone.utc)
         results: list[PlaylistResult] = []
+
+        self._preflight()
 
         for pair in self.config.playlists:
             try:

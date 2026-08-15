@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Iterator
 
-from .errors import ApiError, AuthError
+from .errors import ApiError, AuthError, ForbiddenError
 from .httpclient import HttpClient
 from .matching import Candidate
 
@@ -155,12 +155,17 @@ class SpotifyClient:
                 method, url, headers=self._auth_headers(), **kwargs
             )
         except AuthError:
-            # The token may have been revoked mid-run; mint a new one and retry once.
+            # Only a 401 lands here. The token may have been revoked mid-run,
+            # so mint a new one and retry once. A 403 is a ForbiddenError and
+            # passes straight through: the token is valid, the request is not
+            # allowed, and refreshing would only repeat the same rejection.
             log.info("Spotify rejected the access token; refreshing and retrying")
             self._access_token = None
             return self.http.request(
                 method, url, headers=self._auth_headers(), **kwargs
             )
+        except ForbiddenError as exc:
+            raise _explain_forbidden(exc) from exc
 
     # -- Account ------------------------------------------------------------
 
@@ -329,6 +334,27 @@ class SpotifyClient:
                 # it returned nothing at all.
                 break
         return results
+
+
+def _explain_forbidden(exc: ForbiddenError) -> ForbiddenError:
+    """Turn Spotify's 403 bodies into something actionable.
+
+    The premium case is worth naming: it is an account-level policy for apps
+    in development mode, so nothing about the token, the scopes or the
+    playlists can fix it, and the raw message does not say what to do.
+    """
+    text = str(exc)
+    if "premium" in text.lower():
+        return ForbiddenError(
+            "Spotify refused the request: the account that owns the developer "
+            "app needs an active Premium subscription before the Web API will "
+            "serve it. This is Spotify's policy for apps in development mode "
+            "and applies to the app owner, not to the playlists. Either put "
+            "Premium on that account, or register the app under an account "
+            "that already has it and add your own account under the app's "
+            f"'Users' list. Original message: {text}"
+        )
+    return exc
 
 
 def _escape(text: str) -> str:

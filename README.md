@@ -517,6 +517,7 @@ fährt mit `MODE=server` besser — siehe
 | `Configuration error: Required environment variable ... is not set` | Variable fehlt im Stack. Container startet bewusst nicht halb konfiguriert. |
 | `Spotify did not return an access token` | `SPOTIFY_CLIENT_ID`/`SECRET`/`REFRESH_TOKEN` passen nicht zusammen — Auth-Helper erneut laufen lassen. |
 | `Deezer rejected the request ... (code 300)` | Deezer-Token ungültig oder zurückgezogen. Helper erneut laufen lassen. |
+| `Active premium subscription required for the owner of the app` | Spotify gibt Apps im Development-Modus nur frei, wenn das Konto, dem die App gehört, Premium hat. Betrifft den App-Besitzer, nicht die Playlisten. Entweder Premium auf dieses Konto, oder die App unter einem Konto mit Premium anlegen und das eigene Konto dort unter *Users* eintragen. |
 | `Spotify playlist ... is owned by ..., not by you` | Auf eine fremde Playliste gezeigt. Spotify erlaubt nur Schreibzugriff auf eigene. |
 | `Refusing to mirror a partial playlist` | Deezer hat eine Seite nicht geliefert. Normalerweise nichts zu tun — der nächste Lauf holt es nach. Tritt es bei *jedem* Lauf auf, zählt Deezer Titel mit, die es nicht mehr ausliefert: dann `ALLOW_PARTIAL_SOURCE=true`. |
 | `Mirroring would empty Spotify playlist ...` | Kein einziger Titel zugeordnet — meist ein Token-Problem. Erst prüfen, dann ggf. `ALLOW_EMPTY_MIRROR=true`. |

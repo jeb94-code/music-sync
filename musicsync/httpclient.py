@@ -15,7 +15,7 @@ from typing import Any, Callable
 
 import requests
 
-from .errors import ApiError, AuthError
+from .errors import ApiError, AuthError, ForbiddenError
 
 log = logging.getLogger(__name__)
 
@@ -129,9 +129,17 @@ class HttpClient:
                 self.sleep(wait)
                 continue
 
-            if response.status_code in (401, 403):
+            # 401 means the token is stale and a fresh one may work; 403 means
+            # it is valid but the request is not permitted, so callers must not
+            # treat the two the same.
+            if response.status_code == 401:
                 raise AuthError(
-                    f"{method} {_safe_url(url)} returned {response.status_code}: "
+                    f"{method} {_safe_url(url)} returned 401: "
+                    f"{_body_excerpt(response)}"
+                )
+            if response.status_code == 403:
+                raise ForbiddenError(
+                    f"{method} {_safe_url(url)} returned 403: "
                     f"{_body_excerpt(response)}"
                 )
 
