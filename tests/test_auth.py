@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import pytest
 
+from musicsync import auth as auth_module
 from musicsync.auth import (
     DEFAULT_AUTH_PORT,
     auth_port,
     deezer_redirect_uri,
     spotify_redirect_uri,
 )
-from musicsync.errors import ConfigError
+from musicsync.errors import AuthError, ConfigError
 
 
 @pytest.fixture(autouse=True)
@@ -55,3 +56,52 @@ class TestRedirectUris:
     def test_explicit_override_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("SPOTIFY_REDIRECT_URI", "https://example.test/cb")
         assert spotify_redirect_uri(1234) == "https://example.test/cb"
+
+
+class TestMain:
+    def test_defaults_to_spotify_only(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Deezer no longer hands out apps, so asking for one by default would
+        # fail every new setup.
+        called: list[str] = []
+        monkeypatch.setattr(
+            auth_module, "authorize_spotify",
+            lambda _http: called.append("spotify") or "refresh-abc",
+        )
+        monkeypatch.setattr(
+            auth_module, "authorize_deezer",
+            lambda _http: called.append("deezer") or "deezer-abc",
+        )
+
+        assert auth_module.main([]) == 0
+        assert called == ["spotify"]
+        out = capsys.readouterr().out
+        assert "SPOTIFY_REFRESH_TOKEN=refresh-abc" in out
+        assert "DEEZER_ACCESS_TOKEN" not in out
+
+    def test_a_completed_consent_survives_a_later_failure(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Losing a token you just approved in the browser, because the *next*
+        # provider failed, would mean doing the whole flow again.
+        def boom(_http: object) -> str:
+            raise AuthError("Deezer app id missing")
+
+        monkeypatch.setattr(
+            auth_module, "authorize_spotify", lambda _http: "refresh-abc"
+        )
+        monkeypatch.setattr(auth_module, "authorize_deezer", boom)
+
+        assert auth_module.main(["both"]) == 1
+        assert "SPOTIFY_REFRESH_TOKEN=refresh-abc" in capsys.readouterr().out
+
+    def test_nothing_obtained_prints_no_token_block(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        def boom(_http: object) -> str:
+            raise AuthError("nope")
+
+        monkeypatch.setattr(auth_module, "authorize_spotify", boom)
+        assert auth_module.main(["spotify"]) == 1
+        assert "Add these to your Portainer" not in capsys.readouterr().out

@@ -219,17 +219,33 @@ def authorize_deezer(http: HttpClient) -> str:
     return str(access_token)
 
 
+def _report(results: dict[str, str]) -> None:
+    if not results:
+        return
+    print()
+    print("=" * 68)
+    print("Add these to your Portainer stack environment (never commit them):")
+    print("=" * 68)
+    for key, value in results.items():
+        print(f"{key}={value}")
+    print("=" * 68)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="musicsync.auth",
-        description="Mint the Spotify refresh token and Deezer access token.",
+        description="Mint the Spotify refresh token, and a Deezer token if you "
+                    "still have a Deezer app.",
     )
     parser.add_argument(
         "provider",
         nargs="?",
-        default="both",
+        # Spotify alone is what a new setup needs: public Deezer playlists
+        # require no token, and Deezer has closed new app registration, so
+        # asking for one by default would fail for everybody starting today.
+        default="spotify",
         choices=["spotify", "deezer", "both"],
-        help="which provider to authorize (default: both)",
+        help="which provider to authorize (default: spotify)",
     )
     args = parser.parse_args(argv)
 
@@ -242,18 +258,16 @@ def main(argv: list[str] | None = None) -> int:
                 results["DEEZER_ACCESS_TOKEN"] = authorize_deezer(http)
     except (AuthError, ConfigError) as exc:
         print(f"\nError: {exc}", file=sys.stderr)
+        # Whatever already succeeded is still worth having -- a consent flow
+        # you completed should not be thrown away because a later one failed.
+        _report(results)
         return 1
     except KeyboardInterrupt:
         print("\nAborted.", file=sys.stderr)
+        _report(results)
         return 130
 
-    print()
-    print("=" * 68)
-    print("Add these to your Portainer stack environment (never commit them):")
-    print("=" * 68)
-    for key, value in results.items():
-        print(f"{key}={value}")
-    print("=" * 68)
+    _report(results)
     return 0
 
 

@@ -189,6 +189,28 @@ ausgegebene URL im Browser deines **Laptops** öffnen; der Tunnel bringt den
 Redirect zum Helper auf dem Server. Wichtig: die SSH-Sitzung offen lassen,
 bis der Token im Terminal steht.
 
+### Variante: alles über Portainer
+
+Der Helper lässt sich auch als Stack deployen, wenn du nichts an der
+Kommandozeile machen willst:
+
+1. **Stacks → Add stack → Repository**, gleiche Repository-URL und
+   -Reference wie später beim Sync-Stack, aber **Compose path**:
+   `docker-compose.auth.yml`
+2. Environment variables: `SPOTIFY_CLIENT_ID` und `SPOTIFY_CLIENT_SECRET`
+3. **Deploy the stack**
+4. **Containers → `…auth-1` → Logs.** Dort steht die Consent-URL.
+5. URL im Browser öffnen, **Agree**, danach die Logs neu laden — jetzt steht
+   dort `SPOTIFY_REFRESH_TOKEN=…`
+6. **Den Stack anschließend löschen.** Das Token steht im Containerlog; der
+   Helper wird nur dieses eine Mal gebraucht.
+
+> **Wichtig:** Läuft Portainer auf dem Server und dein Browser auf einem
+> anderen Rechner, brauchst du trotzdem den SSH-Tunnel von oben. Spotify
+> erlaubt bei `http` ausschließlich `127.0.0.1` als Redirect-Ziel — eine
+> LAN-IP wie `192.168.x.x` wird abgelehnt. Der Tunnel muss stehen, *bevor* du
+> die URL im Browser öffnest.
+
 > Wenn du das Repository ohnehin geklont hast, geht statt der zwei Befehle
 > auch `docker compose -f docker-compose.auth.yml run --rm --service-ports auth spotify`.
 
