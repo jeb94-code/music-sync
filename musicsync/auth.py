@@ -24,6 +24,12 @@ from .spotify import AUTHORIZE_URL, SCOPES, TOKEN_URL
 
 DEEZER_AUTHORIZE_URL = "https://connect.deezer.com/oauth/auth.php"
 DEEZER_TOKEN_URL = "https://connect.deezer.com/oauth/access_token.php"
+
+# The helper binds this only for the minute the consent flow takes, but a home
+# server rarely has 8080 free -- Nextcloud, Traefik dashboards and half the
+# self-hosted world sit there. 8479 keeps clear of those and of this project's
+# own server-mode port (8477), so the two can never collide.
+DEFAULT_AUTH_PORT = 8479
 # basic_access is required for /user/me; manage_library covers reading the
 # user's own (including private) playlists; offline_access makes the token
 # non-expiring, which is what an unattended container needs.
@@ -104,12 +110,31 @@ def _prompt(url: str, redirect_uri: str) -> None:
     print(f"Waiting for the redirect to {redirect_uri} ...")
 
 
+def auth_port() -> int:
+    return env_int("AUTH_PORT", DEFAULT_AUTH_PORT, minimum=1)
+
+
+def spotify_redirect_uri(port: int) -> str:
+    """Where Spotify sends the browser back.
+
+    Must match the Redirect URI registered on the Spotify app character for
+    character, which is why it is derived from the port rather than hardcoded:
+    changing AUTH_PORT has to change this too, or consent fails with
+    INVALID_CLIENT. Spotify only accepts http for the literal IPv4 loopback
+    address, so `localhost` is not interchangeable here.
+    """
+    return env_str("SPOTIFY_REDIRECT_URI", f"http://127.0.0.1:{port}/callback")  # type: ignore[return-value]
+
+
+def deezer_redirect_uri(port: int) -> str:
+    return env_str("DEEZER_REDIRECT_URI", f"http://localhost:{port}/callback")  # type: ignore[return-value]
+
+
 def authorize_spotify(http: HttpClient) -> str:
     client_id = env_str("SPOTIFY_CLIENT_ID", required=True)
     client_secret = env_str("SPOTIFY_CLIENT_SECRET", required=True)
-    port = env_int("AUTH_PORT", 8080, minimum=1)
-    # Spotify only accepts http for the explicit IPv4 loopback address.
-    redirect_uri = env_str("SPOTIFY_REDIRECT_URI", f"http://127.0.0.1:{port}/callback")
+    port = auth_port()
+    redirect_uri = spotify_redirect_uri(port)
     state = secrets.token_urlsafe(16)
 
     query = urllib.parse.urlencode(
@@ -152,8 +177,8 @@ def authorize_spotify(http: HttpClient) -> str:
 def authorize_deezer(http: HttpClient) -> str:
     app_id = env_str("DEEZER_APP_ID", required=True)
     app_secret = env_str("DEEZER_APP_SECRET", required=True)
-    port = env_int("AUTH_PORT", 8080, minimum=1)
-    redirect_uri = env_str("DEEZER_REDIRECT_URI", f"http://localhost:{port}/callback")
+    port = auth_port()
+    redirect_uri = deezer_redirect_uri(port)
 
     query = urllib.parse.urlencode(
         {

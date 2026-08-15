@@ -83,7 +83,7 @@ eigene App-Registrierung. Kostenlos, dauert drei Minuten.
 2. Name und Beschreibung frei wählen.
 3. **Redirect URI** exakt so eintragen — Zeichen für Zeichen:
    ```
-   http://127.0.0.1:8080/callback
+   http://127.0.0.1:8479/callback
    ```
    Es muss `127.0.0.1` sein. Spotify lehnt `localhost` bei `http` inzwischen ab.
 4. Unter **Which API/SDKs are you planning to use?** die **Web API** ankreuzen.
@@ -123,11 +123,26 @@ docker build -t music-sync "https://github.com/jeb94-code/music-sync.git#claude/
 **2. Helper starten** — die beiden Werte aus Schritt 1 einsetzen:
 
 ```bash
-docker run --rm -p 8080:8080 \
+docker run --rm -p 8479:8479 \
   -e SPOTIFY_CLIENT_ID=hier_deine_client_id \
   -e SPOTIFY_CLIENT_SECRET=hier_dein_client_secret \
   --entrypoint python music-sync -m musicsync.auth spotify
 ```
+
+Port 8479 ist so gewählt, dass er auf Heimservern selten belegt ist — anders
+als 8080, wo meist Nextcloud oder ein Dashboard sitzt. Der Helper hält ihn
+ohnehin nur für die Dauer der Anmeldung. Ist 8479 bei dir vergeben, nimm einen
+anderen — dann müssen aber **drei** Stellen dieselbe Nummer tragen:
+
+```bash
+docker run --rm -p 9123:9123 -e AUTH_PORT=9123 \
+  -e SPOTIFY_CLIENT_ID=... -e SPOTIFY_CLIENT_SECRET=... \
+  --entrypoint python music-sync -m musicsync.auth spotify
+```
+
+und die Redirect URI in der Spotify-App muss auf `http://127.0.0.1:9123/callback`
+geändert werden. Passt sie nicht exakt, lehnt Spotify mit
+`INVALID_CLIENT: Invalid redirect URI` ab.
 
 ### Was dann passiert
 
@@ -138,7 +153,7 @@ Open this URL in your browser and approve the access:
 
     https://accounts.spotify.com/authorize?client_id=...
 
-Waiting for the redirect to http://127.0.0.1:8080/callback ...
+Waiting for the redirect to http://127.0.0.1:8479/callback ...
 ```
 
 Und bleibt stehen — das ist richtig so, es wartet auf dich.
@@ -162,11 +177,11 @@ Portainer. Der Container hat sich selbst beendet, es läuft nichts weiter.
 
 ### Variante: Server ohne Browser
 
-Der Redirect geht an `127.0.0.1:8080`, also an den Rechner mit dem Browser.
+Der Redirect geht an `127.0.0.1:8479`, also an den Rechner mit dem Browser.
 Läuft der Helper auf dem Server, leitet ein SSH-Tunnel das dorthin weiter:
 
 ```bash
-ssh -L 8080:localhost:8080 user@dein-server
+ssh -L 8479:localhost:8479 user@dein-server
 ```
 
 In dieser SSH-Sitzung dann dieselben zwei Befehle von oben ausführen. Die
@@ -485,7 +500,7 @@ fährt mit `MODE=server` besser — siehe
 | `Mirroring would empty Spotify playlist ...` | Kein einziger Titel zugeordnet — meist ein Token-Problem. Erst prüfen, dann ggf. `ALLOW_EMPTY_MIRROR=true`. |
 | `Deezer has no readable data for /playlist/...` | ID falsch, oder die Playliste ist nicht öffentlich. Deezer meldet beides gleich. Mit `curl -s "https://api.deezer.com/playlist/DEINE_ID"` prüfen. |
 | Viele `No Spotify match` | Titel fehlen im Spotify-Katalog deiner Region, oder `MATCH_THRESHOLD` ist zu hoch. `LOG_LEVEL=DEBUG` zeigt die Bewertungen. |
-| `INVALID_CLIENT: Invalid redirect URI` beim Auth-Helper | Redirect-URI im Spotify-Dashboard muss exakt `http://127.0.0.1:8080/callback` lauten. |
+| `INVALID_CLIENT: Invalid redirect URI` beim Auth-Helper | Redirect-URI im Spotify-Dashboard muss exakt zur benutzten Portnummer passen — standardmäßig `http://127.0.0.1:8479/callback`. |
 
 Tokens werden nirgends im Klartext geloggt: Deezer überträgt sie als
 URL-Parameter, und alles, was in Logs oder Fehlermeldungen landen kann, wird
