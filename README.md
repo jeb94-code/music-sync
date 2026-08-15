@@ -194,7 +194,10 @@ richten wird beim Start abgelehnt — die zweite würde die erste überschreiben
 
 1. **Stacks → Add stack → Repository**
 2. **Repository URL**: `https://github.com/jeb94-code/music-sync`
-3. **Repository reference**: `refs/heads/main`
+3. **Repository reference**: der Branch, in dem der Code liegt. Solange nichts
+   nach `main` gemerged ist, ist das
+   `refs/heads/claude/spotify-deezer-sync-vgh7hl` — nach einem Merge
+   entsprechend `refs/heads/main`.
 4. **Compose path**: `docker-compose.yml`
 5. **Environment variables** — mindestens diese vier:
 
