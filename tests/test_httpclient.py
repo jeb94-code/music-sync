@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 import requests
 
-from musicsync.errors import ApiError, AuthError
+from musicsync.errors import ApiError, AuthError, ForbiddenError
 from musicsync.httpclient import HttpClient
 
 
@@ -107,6 +107,25 @@ def test_401_raises_auth_error_without_retrying(slept: list[float]) -> None:
     with pytest.raises(AuthError, match="401"):
         client.get("https://example.test/x")
     assert slept == []
+
+
+def test_403_is_forbidden_not_auth(slept: list[float]) -> None:
+    # A 403 means the token is fine but the request is not allowed, so callers
+    # must be able to tell it apart -- refreshing the token cannot help.
+    client = make_client([FakeResponse(403, text="premium required")], slept)
+    with pytest.raises(ForbiddenError, match="403"):
+        client.get("https://example.test/x")
+    assert slept == []
+
+
+def test_forbidden_is_not_caught_as_auth_error(slept: list[float]) -> None:
+    client = make_client([FakeResponse(403, text="nope")], slept)
+    try:
+        client.get("https://example.test/x")
+    except AuthError:  # pragma: no cover - would mean the split is broken
+        raise AssertionError("403 must not be an AuthError")
+    except ForbiddenError:
+        pass
 
 
 def test_404_is_not_retried(slept: list[float]) -> None:

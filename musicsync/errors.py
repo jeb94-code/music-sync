@@ -16,7 +16,20 @@ class ApiError(MusicSyncError):
 
 
 class AuthError(ApiError):
-    """Raised when credentials are rejected or a token cannot be refreshed."""
+    """Raised when credentials are rejected or a token cannot be refreshed.
+
+    This means the token itself is the problem (HTTP 401), so minting a fresh
+    one is worth trying.
+    """
+
+
+class ForbiddenError(ApiError):
+    """Raised when the credentials are valid but the request is not allowed.
+
+    HTTP 403. Deliberately not an AuthError: the token is fine, so refreshing
+    it changes nothing. Account state or missing scopes cause these, and they
+    need a human, not a retry.
+    """
 
 
 class SafetyAbort(MusicSyncError):
