@@ -89,9 +89,11 @@ class Synchronizer:
     def _deezer_track_detail(self, track_id: str) -> tuple[str | None, list[str]]:
         """Return (isrc, artist names) for a Deezer track, using the cache.
 
-        The playlist endpoint omits the ISRC and the full contributor list, so
-        a per-track lookup is needed. The result never changes, so it is cached
-        permanently and this cost is only paid once per track, ever.
+        Only the single-track endpoint exposes the full contributor list, and
+        the ISRC for the rare track whose playlist entry lacks one. Callers
+        should avoid this for tracks that can be resolved from the listing
+        alone -- it costs one request each. Results never change, so they are
+        cached permanently.
         """
         cached = self.cache.get_track_detail(track_id)
         if cached is not None:
@@ -116,9 +118,17 @@ class Synchronizer:
         if cached is not None:
             return cached.spotify_uri, _MATCH_CACHE
 
-        isrc, artists = self._deezer_track_detail(track.id)
-        if not artists and track.artist:
-            artists = [track.artist]
+        # The playlist listing already carries the ISRC for virtually every
+        # track, and an ISRC hit needs nothing else -- so the per-track
+        # endpoint is only consulted when the listing came up short. That is
+        # the difference between one request per track and one per playlist
+        # page on a first run.
+        isrc = track.isrc
+        artists = [track.artist] if track.artist else []
+        if not isrc:
+            isrc, detail_artists = self._deezer_track_detail(track.id)
+            if detail_artists:
+                artists = detail_artists
 
         if isrc:
             by_isrc = self.spotify.search_by_isrc(isrc)
@@ -134,6 +144,13 @@ class Synchronizer:
             if chosen:
                 self.cache.put_match(track.id, chosen.uri, _MATCH_ISRC)
                 return chosen.uri, _MATCH_ISRC
+
+        # Falling back to search: the full credit list is worth one request
+        # here, because a missing featured artist is what makes these fail.
+        if len(artists) <= 1:
+            _, detail_artists = self._deezer_track_detail(track.id)
+            if detail_artists:
+                artists = detail_artists
 
         candidates: list[Candidate] = self.spotify.search_by_metadata(
             track.title, artists[0] if artists else track.artist,
@@ -251,7 +268,9 @@ class Synchronizer:
             if uri:
                 desired.append(uri)
             else:
-                isrc, _ = self._deezer_track_detail(track.id)
+                # An unmatched track has already been through _resolve_track,
+                # so its detail is either on the listing or in the cache.
+                isrc = track.isrc or self._deezer_track_detail(track.id)[0]
                 result.unmatched.append(
                     UnmatchedTrack(deezer_id=track.id, label=track.label, isrc=isrc)
                 )

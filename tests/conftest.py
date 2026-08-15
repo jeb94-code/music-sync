@@ -56,6 +56,9 @@ class FakeDeezerClient:
         self.track_calls: list[str] = []
         # Lets a test simulate a truncated read without touching pagination.
         self.truncate_after: int | None = None
+        # Richer payloads for /track/{id}, mirroring the real API: the
+        # single-track endpoint returns fields the playlist listing omits.
+        self.detail_overrides: dict[str, dict[str, Any]] = {}
 
     def get_playlist(self, playlist_id: str) -> dict[str, Any]:
         playlist = self.playlists[playlist_id]
@@ -73,6 +76,8 @@ class FakeDeezerClient:
 
     def get_track(self, track_id: str) -> dict[str, Any]:
         self.track_calls.append(track_id)
+        if track_id in self.detail_overrides:
+            return self.detail_overrides[track_id]
         for playlist in self.playlists.values():
             for raw in playlist["tracks"]:
                 if str(raw["id"]) == str(track_id):

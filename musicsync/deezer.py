@@ -24,6 +24,9 @@ PAGE_SIZE = 100
 _QUOTA_CODES = {4}
 _SERVICE_BUSY_CODES = {700}
 _AUTH_CODES = {300, 200}
+# 800 "no data" covers both a wrong ID and a playlist we may not read, since
+# an unauthenticated caller cannot tell a private playlist from a missing one.
+_NO_DATA_CODES = {800}
 
 # 50 requests / 5 s is the documented ceiling; stay comfortably under it.
 _MIN_REQUEST_INTERVAL_S = 0.12
@@ -95,6 +98,18 @@ class DeezerClient:
                 )
                 self.http.sleep(wait)
                 continue
+            if code in _NO_DATA_CODES:
+                hint = (
+                    "Check the ID, and make sure the playlist is public"
+                    if not self.access_token
+                    else "Check the ID, and that this playlist belongs to the "
+                         "account the token was issued for"
+                )
+                raise ApiError(
+                    f"Deezer has no readable data for {path}. {hint}. "
+                    "Deezer reports a private playlist and a missing one the "
+                    "same way, so both look like this."
+                )
             raise ApiError(f"Deezer error on {path}: {message} (code {code})")
 
         raise ApiError(f"Deezer kept throttling {path}; giving up for this run")

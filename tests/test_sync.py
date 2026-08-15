@@ -261,6 +261,69 @@ class TestMatching:
         assert any(call.startswith("meta:") for call in spotify.search_calls)
         assert spotify.playlists["sp1"]["uris"] == ["spotify:track:a"]
 
+    def test_isrc_from_the_listing_avoids_per_track_requests(
+        self, world, tmp_path: Path
+    ) -> None:
+        # The playlist listing carries the ISRC, so resolving a whole playlist
+        # must not hit /track/{id} even once.
+        deezer, _, _ = world
+        pair = PlaylistPair(deezer_id="100", spotify_id="sp1")
+        sync, _ = build(world, tmp_path, pair)
+        sync.sync_pair(pair)
+
+        assert deezer.track_calls == []
+
+    def test_missing_isrc_falls_back_to_the_track_endpoint(
+        self, tmp_path: Path, cache: MatchCache
+    ) -> None:
+        raw = deezer_raw_track("1", "Alpha", "Band A", 200, isrc=None)
+        # Deezer only exposes contributors on the single-track endpoint.
+        raw["contributors"] = [{"name": "Band A"}, {"name": "Guest"}]
+        detailed = dict(raw, isrc="AAA111")
+        deezer = FakeDeezerClient({"100": {"title": "Rock", "tracks": [detailed]}})
+        # The listing must look like the real one: no ISRC on the entry.
+        deezer.playlists["100"]["tracks"] = [raw]
+        deezer.detail_overrides = {"1": detailed}
+
+        spotify = FakeSpotifyClient(
+            catalogue=[
+                spotify_track("spotify:track:a", "Alpha", "Band A", "AAA111", 200)
+            ],
+            playlists={"sp1": {"name": "Rock Mirror", "owner": "me", "uris": []}},
+        )
+        pair = PlaylistPair(deezer_id="100", spotify_id="sp1")
+        sync, _ = build((deezer, spotify, cache), tmp_path, pair)
+        sync.sync_pair(pair)
+
+        assert deezer.track_calls == ["1"]
+        assert spotify.playlists["sp1"]["uris"] == ["spotify:track:a"]
+
+    def test_search_fallback_fetches_the_full_credit_list(
+        self, tmp_path: Path, cache: MatchCache
+    ) -> None:
+        # No ISRC match possible, so matching leans on artists -- and the
+        # featured artist only exists on the single-track endpoint.
+        raw = deezer_raw_track("1", "Alpha", "Band A", 200, isrc="ZZZ999")
+        detailed = dict(raw, contributors=[{"name": "Band A"}, {"name": "Guest"}])
+        deezer = FakeDeezerClient({"100": {"title": "Rock", "tracks": [raw]}})
+        deezer.detail_overrides = {"1": detailed}
+
+        spotify = FakeSpotifyClient(
+            catalogue=[
+                Candidate(
+                    uri="spotify:track:a", name="Alpha", artists=["Guest"],
+                    duration_s=200, isrc="OTHER",
+                )
+            ],
+            playlists={"sp1": {"name": "Rock Mirror", "owner": "me", "uris": []}},
+        )
+        pair = PlaylistPair(deezer_id="100", spotify_id="sp1")
+        sync, _ = build((deezer, spotify, cache), tmp_path, pair)
+        sync.sync_pair(pair)
+
+        assert deezer.track_calls == ["1"]
+        assert spotify.playlists["sp1"]["uris"] == ["spotify:track:a"]
+
     def test_unmatched_tracks_are_reported(self, world, tmp_path: Path) -> None:
         _, spotify, _ = world
         spotify.catalogue = [

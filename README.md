@@ -20,17 +20,18 @@ Keys und Tokens kommen ausschließlich aus Environment-Variablen.
 ## Inhalt
 
 1. [Wie abgeglichen wird](#wie-abgeglichen-wird)
-2. [Schritt 1 – Apps registrieren](#schritt-1--apps-registrieren)
-3. [Schritt 2 – Tokens erzeugen](#schritt-2--tokens-erzeugen)
-4. [Schritt 3 – Playlist-IDs heraussuchen](#schritt-3--playlist-ids-heraussuchen)
-5. [Schritt 4 – Stack in Portainer anlegen](#schritt-4--stack-in-portainer-anlegen)
-6. [Schritt 5 – Trockenlauf, dann scharf schalten](#schritt-5--trockenlauf-dann-scharf-schalten)
-7. [Alternative: Steuerung über n8n](#alternative-steuerung-über-n8n)
-8. [Environment-Variablen](#environment-variablen)
-9. [Betrieb](#betrieb)
-10. [Fehlersuche](#fehlersuche)
-11. [Grenzen](#grenzen)
-12. [Entwicklung](#entwicklung)
+2. [Schritt 1 – Spotify-App anlegen](#schritt-1--spotify-app-anlegen)
+3. [Schritt 2 – Spotify-Token erzeugen](#schritt-2--spotify-token-erzeugen)
+4. [Schritt 3 – Deezer vorbereiten](#schritt-3--deezer-vorbereiten)
+5. [Schritt 4 – Playlist-IDs heraussuchen](#schritt-4--playlist-ids-heraussuchen)
+6. [Schritt 5 – Stack in Portainer anlegen](#schritt-5--stack-in-portainer-anlegen)
+7. [Schritt 6 – Trockenlauf, dann scharf schalten](#schritt-6--trockenlauf-dann-scharf-schalten)
+8. [Alternative: Steuerung über n8n](#alternative-steuerung-über-n8n)
+9. [Environment-Variablen](#environment-variablen)
+10. [Betrieb](#betrieb)
+11. [Fehlersuche](#fehlersuche)
+12. [Grenzen](#grenzen)
+13. [Entwicklung](#entwicklung)
 
 ---
 
@@ -72,93 +73,147 @@ Fehler in einer Playliste stoppen die anderen nicht.
 
 ---
 
-## Schritt 1 – Apps registrieren
+## Schritt 1 – Spotify-App anlegen
 
-### Spotify
+Damit das Tool in deinem Namen Playlisten schreiben darf, braucht es eine
+eigene App-Registrierung. Kostenlos, dauert drei Minuten.
 
-1. <https://developer.spotify.com/dashboard> → **Create app**
+1. <https://developer.spotify.com/dashboard> öffnen, mit deinem Spotify-Konto
+   anmelden, **Create app**.
 2. Name und Beschreibung frei wählen.
-3. **Redirect URI** exakt so eintragen:
+3. **Redirect URI** exakt so eintragen — Zeichen für Zeichen:
    ```
    http://127.0.0.1:8080/callback
    ```
-   Spotify akzeptiert bei `http` nur noch die IP `127.0.0.1`, **nicht**
-   `localhost`.
-4. Unter **APIs used**: *Web API* auswählen.
-5. Nach dem Speichern unter *Settings* die **Client ID** und das
-   **Client Secret** notieren.
-
-### Deezer
-
-Nur nötig, wenn du **private** Playlisten spiegeln willst. Öffentliche
-Playlisten liest das Tool ohne Token.
-
-1. <https://developers.deezer.com/myapps> → **Create a new Application**
-2. **Application domain**: `localhost`
-3. **Redirect URL after authentication**:
-   ```
-   http://localhost:8080/callback
-   ```
-4. **Application ID** und **Secret Key** notieren.
+   Es muss `127.0.0.1` sein. Spotify lehnt `localhost` bei `http` inzwischen ab.
+4. Unter **Which API/SDKs are you planning to use?** die **Web API** ankreuzen.
+5. Speichern, dann *Settings* öffnen: dort stehen **Client ID** und (hinter
+   *View client secret*) das **Client Secret**. Beide brauchst du gleich.
 
 ---
 
-## Schritt 2 – Tokens erzeugen
+## Schritt 2 – Spotify-Token erzeugen
 
-Der Container läuft unbeaufsichtigt und kann sich nicht interaktiv anmelden.
-Die Anmeldung machst du deshalb **einmal** auf einem Rechner mit Browser; das
-Ergebnis sind zwei Werte, die du später in Portainer einträgst.
+### Warum dieser Schritt existiert
+
+Client ID und Secret allein genügen nicht: sie identifizieren die App, nicht
+dich. Damit die App auf *dein* Konto zugreifen darf, musst du das einmal im
+Browser bestätigen. Heraus kommt ein **Refresh Token** — ein dauerhaft
+gültiger Wert, mit dem der Container sich später selbst anmeldet, ohne dass du
+je wieder etwas bestätigen musst.
+
+Der Container kann diesen Schritt nicht selbst machen, weil er keinen Browser
+hat. Deshalb einmal von Hand. Ergebnis ist **eine einzige Textzeile**, die du
+später in Portainer einträgst.
+
+### Wo ausführen?
+
+Auf dem Rechner, auf dem auch dein **Browser** läuft — typischerweise dein
+Laptop. Docker muss dort installiert sein. Läuft Docker nur auf dem Server,
+siehe [weiter unten](#variante-server-ohne-browser).
+
+### Die zwei Befehle
+
+**1. Image bauen** (holt den Code direkt von GitHub, kein Clone nötig):
 
 ```bash
-git clone https://github.com/jeb94-code/music-sync.git
-cd music-sync
-cp .env.example .env
-# In .env eintragen: SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET,
-#                    DEEZER_APP_ID, DEEZER_APP_SECRET
-docker compose -f docker-compose.auth.yml run --rm --service-ports auth
+docker build -t music-sync "https://github.com/jeb94-code/music-sync.git#claude/spotify-deezer-sync-vgh7hl"
 ```
 
-Das Skript gibt eine URL aus. Im Browser öffnen, Zugriff bestätigen, fertig —
-am Ende stehen im Terminal:
+**2. Helper starten** — die beiden Werte aus Schritt 1 einsetzen:
+
+```bash
+docker run --rm -p 8080:8080 \
+  -e SPOTIFY_CLIENT_ID=hier_deine_client_id \
+  -e SPOTIFY_CLIENT_SECRET=hier_dein_client_secret \
+  --entrypoint python music-sync -m musicsync.auth spotify
+```
+
+### Was dann passiert
+
+Das Terminal zeigt:
 
 ```
-SPOTIFY_REFRESH_TOKEN=AQD...
-DEEZER_ACCESS_TOKEN=frb...
+Open this URL in your browser and approve the access:
+
+    https://accounts.spotify.com/authorize?client_id=...
+
+Waiting for the redirect to http://127.0.0.1:8080/callback ...
 ```
 
-Beide Werte gut aufheben. Nur ein Provider nötig? Dann denselben Befehl mit
-`... auth spotify` bzw. `... auth deezer` am Ende.
+Und bleibt stehen — das ist richtig so, es wartet auf dich.
 
-> Das Spotify-Refresh-Token läuft nicht ab. Das Deezer-Token wird mit
-> `offline_access` angefragt und ist damit ebenfalls dauerhaft gültig.
-> Beides wird ungültig, wenn du in den Kontoeinstellungen den App-Zugriff
-> entziehst — dann den Helper erneut laufen lassen.
+1. Die lange URL kopieren und im Browser öffnen.
+2. Spotify fragt, ob die App auf dein Konto zugreifen darf → **Agree**.
+3. Der Browser landet auf einer Seite „Spotify connected“. Die kannst du
+   schließen.
+4. Im Terminal steht jetzt:
 
-### Wenn der Server keinen Browser hat
+```
+====================================================================
+Add these to your Portainer stack environment (never commit them):
+====================================================================
+SPOTIFY_REFRESH_TOKEN=AQDx7f9...
+====================================================================
+```
 
-Der Redirect geht an `127.0.0.1:8080`, also an den Rechner, auf dem der
-Browser läuft. Zwei Wege:
+Diese Zeile ist das Ergebnis. Kopier sie dir weg — sie kommt in Schritt 5 in
+Portainer. Der Container hat sich selbst beendet, es läuft nichts weiter.
 
-**A – Helper auf dem Laptop** (einfachster Fall, Docker dort vorausgesetzt):
-Befehl oben einfach lokal ausführen. Der Server ist dafür nicht nötig; es
-entstehen nur zwei Textwerte.
+### Variante: Server ohne Browser
 
-**B – Helper auf dem Server, Browser auf dem Laptop:** einen SSH-Tunnel legen,
-damit `127.0.0.1:8080` im Browser beim Server ankommt:
+Der Redirect geht an `127.0.0.1:8080`, also an den Rechner mit dem Browser.
+Läuft der Helper auf dem Server, leitet ein SSH-Tunnel das dorthin weiter:
 
 ```bash
 ssh -L 8080:localhost:8080 user@dein-server
-# in der SSH-Sitzung dann:
-cd music-sync
-docker compose -f docker-compose.auth.yml run --rm --service-ports auth
 ```
 
-Die ausgegebene URL im Browser des **Laptops** öffnen. Der Redirect auf
-`127.0.0.1:8080` läuft durch den Tunnel zum Helper auf dem Server.
+In dieser SSH-Sitzung dann dieselben zwei Befehle von oben ausführen. Die
+ausgegebene URL im Browser deines **Laptops** öffnen; der Tunnel bringt den
+Redirect zum Helper auf dem Server. Wichtig: die SSH-Sitzung offen lassen,
+bis der Token im Terminal steht.
+
+> Wenn du das Repository ohnehin geklont hast, geht statt der zwei Befehle
+> auch `docker compose -f docker-compose.auth.yml run --rm --service-ports auth spotify`.
 
 ---
 
-## Schritt 3 – Playlist-IDs heraussuchen
+## Schritt 3 – Deezer vorbereiten
+
+**Für öffentliche Playlisten ist hier nichts zu tun.** Deezers öffentliche API
+liefert sie ohne jede Anmeldung — inklusive aller Titel und ihrer ISRC-Codes.
+Du brauchst weder App noch Token.
+
+Prüfen kannst du das mit der Playlist-ID aus Schritt 4:
+
+```bash
+curl -s "https://api.deezer.com/playlist/DEINE_ID" | head -c 200
+```
+
+Kommt der Titel deiner Playliste zurück, ist alles gut. Kommt
+`{"error":{"type":"DataException","message":"no data","code":800}}`, ist die
+Playliste privat oder die ID falsch.
+
+### Private Playlisten
+
+Dafür wäre ein Deezer-Token nötig — und das ist derzeit **nicht erhältlich**:
+Deezer hat die Registrierung neuer Apps geschlossen
+(„We're not accepting new application creation at this time.“). Ohne
+bestehende App gibt es keinen legitimen Weg zu einem Token.
+
+Praktikable Lösung: die betroffene Playliste in Deezer auf öffentlich stellen.
+In der Deezer-App: Playliste → **⋯** → *Playlist bearbeiten* → Schalter
+**Geheim/Privat** ausschalten. Öffentlich heißt „über den Link erreichbar und
+in deinem Profil sichtbar“ — sie wird dadurch nicht beworben.
+
+Hast du eine **ältere** Deezer-App, funktioniert `DEEZER_ACCESS_TOKEN`
+unverändert; den Wert liefert
+`docker compose -f docker-compose.auth.yml run --rm --service-ports auth deezer`.
+
+---
+
+## Schritt 4 – Playlist-IDs heraussuchen
 
 **Deezer:** Playliste öffnen, die Zahl aus der URL nehmen.
 `https://www.deezer.com/de/playlist/908622995` → `908622995`
@@ -190,7 +245,7 @@ richten wird beim Start abgelehnt — die zweite würde die erste überschreiben
 
 ---
 
-## Schritt 4 – Stack in Portainer anlegen
+## Schritt 5 – Stack in Portainer anlegen
 
 1. **Stacks → Add stack → Repository**
 2. **Repository URL**: `https://github.com/jeb94-code/music-sync`
@@ -203,12 +258,12 @@ richten wird beim Start abgelehnt — die zweite würde die erste überschreiben
 
    | Name | Wert |
    | --- | --- |
-   | `SPOTIFY_CLIENT_ID` | aus dem Spotify-Dashboard |
-   | `SPOTIFY_CLIENT_SECRET` | aus dem Spotify-Dashboard |
+   | `SPOTIFY_CLIENT_ID` | aus Schritt 1 |
+   | `SPOTIFY_CLIENT_SECRET` | aus Schritt 1 |
    | `SPOTIFY_REFRESH_TOKEN` | aus Schritt 2 |
-   | `PLAYLISTS` | aus Schritt 3 |
+   | `PLAYLISTS` | aus Schritt 4 |
 
-   Für private Deezer-Playlisten zusätzlich `DEEZER_ACCESS_TOKEN`.
+   `DEEZER_ACCESS_TOKEN` nur, falls du eine ältere Deezer-App hast (siehe Schritt 3).
    Für den ersten Lauf zusätzlich `DRY_RUN` = `true`.
 
 6. **Deploy the stack.** Portainer baut das Image aus dem Repository und
@@ -223,7 +278,7 @@ aktivieren, damit Portainer neue Commits selbstständig ausrollt.
 
 ---
 
-## Schritt 5 – Trockenlauf, dann scharf schalten
+## Schritt 6 – Trockenlauf, dann scharf schalten
 
 Mit `DRY_RUN=true` protokolliert der Container jede geplante Änderung, ohne
 Spotify anzufassen:
@@ -238,9 +293,9 @@ INFO    UPDATED 'Rock Mirror': 41 tracks (+41/-0, 1 unmatched)
 ```
 
 Sieht das plausibel aus, `DRY_RUN` auf `false` setzen und den Stack neu
-deployen. Der erste echte Lauf dauert je nach Playlistgröße ein paar Minuten
-(ein Deezer-Abruf pro Titel für den ISRC); alle weiteren sind dank Cache
-deutlich schneller.
+deployen. Die Deezer-Seite ist schnell (zwei Anfragen je 100 Titel), die
+Spotify-Suche bestimmt die Dauer: grob eine Anfrage pro noch unbekanntem
+Titel. Ab dem zweiten Lauf greift der Cache und es bleibt fast nichts zu tun.
 
 ---
 
@@ -333,11 +388,10 @@ File*). Enthalten: Schedule Trigger (stündlich) → HTTP Request → IF auf
 3. Den Node **Build alert** durch deine Benachrichtigung ersetzen (Telegram,
    Gotify, Mail …) — `subject` und `body` sind fertig befüllt.
 
-Der HTTP-Request-Node hat 10 Minuten Timeout. Der allererste Lauf einer großen
-Bibliothek kann länger dauern (ein Deezer-Abruf pro Titel für den ISRC); nimm
-dafür einmalig `/sync?wait=false` und poll danach `/status`, oder lass den
-ersten Lauf im Schedule-Modus durchlaufen und stelle danach um. Ab dem zweiten
-Lauf greift der Cache und es geht deutlich schneller.
+Der HTTP-Request-Node hat 10 Minuten Timeout. Das reicht für einige tausend
+Titel; bei einer sehr großen Bibliothek nimm für den ersten Lauf einmalig
+`/sync?wait=false` und poll danach `/status`. Ab dem zweiten Lauf greift der
+Cache und es geht deutlich schneller.
 
 ---
 
@@ -350,7 +404,7 @@ Lauf greift der Cache und es geht deutlich schneller.
 | `SPOTIFY_CLIENT_ID` | Client ID der Spotify-App |
 | `SPOTIFY_CLIENT_SECRET` | Client Secret der Spotify-App |
 | `SPOTIFY_REFRESH_TOKEN` | Refresh-Token aus dem Auth-Helper |
-| `PLAYLISTS` | Zuordnung Deezer → Spotify (siehe Schritt 3) |
+| `PLAYLISTS` | Zuordnung Deezer → Spotify (siehe Schritt 4) |
 
 ### Optional
 
@@ -429,6 +483,7 @@ fährt mit `MODE=server` besser — siehe
 | `Spotify playlist ... is owned by ..., not by you` | Auf eine fremde Playliste gezeigt. Spotify erlaubt nur Schreibzugriff auf eigene. |
 | `Refusing to mirror a partial playlist` | Deezer hat eine Seite nicht geliefert. Normalerweise nichts zu tun — der nächste Lauf holt es nach. Tritt es bei *jedem* Lauf auf, zählt Deezer Titel mit, die es nicht mehr ausliefert: dann `ALLOW_PARTIAL_SOURCE=true`. |
 | `Mirroring would empty Spotify playlist ...` | Kein einziger Titel zugeordnet — meist ein Token-Problem. Erst prüfen, dann ggf. `ALLOW_EMPTY_MIRROR=true`. |
+| `Deezer has no readable data for /playlist/...` | ID falsch, oder die Playliste ist nicht öffentlich. Deezer meldet beides gleich. Mit `curl -s "https://api.deezer.com/playlist/DEINE_ID"` prüfen. |
 | Viele `No Spotify match` | Titel fehlen im Spotify-Katalog deiner Region, oder `MATCH_THRESHOLD` ist zu hoch. `LOG_LEVEL=DEBUG` zeigt die Bewertungen. |
 | `INVALID_CLIENT: Invalid redirect URI` beim Auth-Helper | Redirect-URI im Spotify-Dashboard muss exakt `http://127.0.0.1:8080/callback` lauten. |
 
