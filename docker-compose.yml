@@ -51,23 +51,5 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # One-off helper: `docker compose run --rm --service-ports auth`
-  # Not started by `docker compose up` because of the profile.
-  auth:
-    profiles: ["auth"]
-    build: .
-    image: music-sync:latest
-    entrypoint: ["python", "-m", "musicsync.auth"]
-    environment:
-      SPOTIFY_CLIENT_ID: ${SPOTIFY_CLIENT_ID:-}
-      SPOTIFY_CLIENT_SECRET: ${SPOTIFY_CLIENT_SECRET:-}
-      SPOTIFY_REDIRECT_URI: ${SPOTIFY_REDIRECT_URI:-http://127.0.0.1:8080/callback}
-      DEEZER_APP_ID: ${DEEZER_APP_ID:-}
-      DEEZER_APP_SECRET: ${DEEZER_APP_SECRET:-}
-      DEEZER_REDIRECT_URI: ${DEEZER_REDIRECT_URI:-http://localhost:8080/callback}
-      AUTH_PORT: ${AUTH_PORT:-8080}
-    ports:
-      - "${AUTH_PORT:-8080}:${AUTH_PORT:-8080}"
-
 volumes:
   music-sync-data:

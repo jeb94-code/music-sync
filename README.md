@@ -115,7 +115,7 @@ cd music-sync
 cp .env.example .env
 # In .env eintragen: SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET,
 #                    DEEZER_APP_ID, DEEZER_APP_SECRET
-docker compose run --rm --service-ports auth
+docker compose -f docker-compose.auth.yml run --rm --service-ports auth
 ```
 
 Das Skript gibt eine URL aus. Im Browser öffnen, Zugriff bestätigen, fertig —
@@ -126,13 +126,35 @@ SPOTIFY_REFRESH_TOKEN=AQD...
 DEEZER_ACCESS_TOKEN=frb...
 ```
 
-Beide Werte gut aufheben. Nur ein Provider nötig? Dann
-`... run --rm --service-ports auth spotify` bzw. `... auth deezer`.
+Beide Werte gut aufheben. Nur ein Provider nötig? Dann denselben Befehl mit
+`... auth spotify` bzw. `... auth deezer` am Ende.
 
 > Das Spotify-Refresh-Token läuft nicht ab. Das Deezer-Token wird mit
 > `offline_access` angefragt und ist damit ebenfalls dauerhaft gültig.
 > Beides wird ungültig, wenn du in den Kontoeinstellungen den App-Zugriff
 > entziehst — dann den Helper erneut laufen lassen.
+
+### Wenn der Server keinen Browser hat
+
+Der Redirect geht an `127.0.0.1:8080`, also an den Rechner, auf dem der
+Browser läuft. Zwei Wege:
+
+**A – Helper auf dem Laptop** (einfachster Fall, Docker dort vorausgesetzt):
+Befehl oben einfach lokal ausführen. Der Server ist dafür nicht nötig; es
+entstehen nur zwei Textwerte.
+
+**B – Helper auf dem Server, Browser auf dem Laptop:** einen SSH-Tunnel legen,
+damit `127.0.0.1:8080` im Browser beim Server ankommt:
+
+```bash
+ssh -L 8080:localhost:8080 user@dein-server
+# in der SSH-Sitzung dann:
+cd music-sync
+docker compose -f docker-compose.auth.yml run --rm --service-ports auth
+```
+
+Die ausgegebene URL im Browser des **Laptops** öffnen. Der Redirect auf
+`127.0.0.1:8080` läuft durch den Tunnel zum Helper auf dem Server.
 
 ---
 
